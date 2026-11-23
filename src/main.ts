@@ -10,6 +10,8 @@
 import { background } from "https://cdn.jsdelivr.net/gh/justusscott03/PJSLibrary@1.1.3/colors.js";
 import { Game } from "./Game.js";
 
+(function() {
+
 Game.init({ sceneName: "test" });
 Game.Instance.initAfterCreation();
 
@@ -22,3 +24,5 @@ function draw() {
 }
 
 requestAnimationFrame(draw);
+
+}) ();
