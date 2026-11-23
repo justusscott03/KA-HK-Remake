@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shape Editor Tool</title>
+    <style>
+        html, body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: system-ui, sans-serif;
+            background: #f3f4f6;
+        }
+
+        #canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+
+        #help {
+            position: fixed;
+            left: 62px;
+            top: 12px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgb(255 255 255 / 88%);
+            color: #222;
+            font-size: 13px;
+            pointer-events: none;
+        }
+
+        #menu-toggle {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 10;
+
+            width: 42px;
+            height: 42px;
+
+            border: none;
+            border-radius: 8px;
+            background: #333;
+            color: white;
+            font-size: 22px;
+            cursor: pointer;
+        }
+
+        #side-menu {
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 9;
+
+            width: 240px;
+            height: 100%;
+            box-sizing: border-box;
+            padding: 70px 16px 16px;
+
+            background: #fff;
+            box-shadow: 2px 0 12px rgb(0 0 0 / 15%);
+
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+
+            overflow-y: auto;
+        }
+
+        #side-menu.open {
+            transform: translateX(0);
+        }
+
+        #side-menu button {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 8px;
+
+            border: none;
+            border-radius: 6px;
+            background: #eee;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        #side-menu button:hover {
+            background: #ddd;
+        }
+
+        .side-menu-item {
+            height: 50px;
+
+            display: flex;
+            align-items: center;
+            gap: 10px;
+
+            background: #EEE;
+
+            margin-bottom: 10px;
+            padding-left: 10px;
+            padding-right: 10px;
+            border-radius: 10px;
+        }
+
+        .side-menu-item p {
+            margin: 0;
+        }
+
+        .side-menu-item.selected {
+            background: #AAA;
+        }
+
+        .side-menu-item input {
+            width: 100%;
+        }
+    </style>
+    </head>
+    <body>
+        <button id="menu-toggle">☰</button>
+
+        <div id="side-menu">
+            <h2>Shape Editor</h2>
+            <button id="fullscreen-button">Fullscreen</button>
+
+            <!-- <button>New Shape</button>
+            <button>Clear Canvas</button>
+            <button>Settings</button> -->
+
+            <h2>Shapes</h2>
+            <div id="shapes-list"></div>
+
+            <h2>Shape Settings</h2>
+
+            <h3>Fill</h3>
+            <h4>Color</h4>
+            <div class="side-menu-item">
+                <input type="color" id="fill-color-input" value="#888888">
+            </div>
+            <h4>Opacity</h4>
+            <div class="side-menu-item">
+                <input type="range" min="0" max="1" value="1" step="0.01" id="fill-opac-input">
+            </div>
+
+            <h3>Stroke</h3>
+            <h4>Color</h4>
+            <div class="side-menu-item">
+                <input type="color" id="stroke-color-input" value="#000000">
+            </div>
+            <h4>Opacity</h4>
+            <div class="side-menu-item">
+                <input type="range" min="0" max="1" value="1" step="0.01" id="stroke-opac-input">
+            </div>
+            <h4>Weight</h4>
+            <div class="side-menu-item">
+                <input type="range" min="1" max="100" value="1" step="1" id="stroke-weight-input">
+            </div>
+        </div>
+
+        <div id="help">Press S to add a new shape · Press A to add a vertex · Press B to add to add a bezier vertex · Press [ or ] to zoom · Drag vertices to move them</div>
+        <canvas id="canvas"></canvas>
+
+        <script type="application/javascript">
+            // Wrap in IIFE so it works in KA
+            (function() {
+            const fullscreenButton = document.getElementById("fullscreen-button")
+
+            fullscreenButton.addEventListener("click", () => {
+                const projectHTML = document.documentElement.outerHTML;
+                const blob = new Blob([projectHTML], { type: "text/html" });
+                const blobURL = URL.createObjectURL(blob);
+                window.open(blobURL, "_blank");
+            });
+
+            const menuToggle = document.getElementById("menu-toggle");
+            const sideMenu = document.getElementById("side-menu");
+
+            menuToggle.addEventListener("click", () => {
+                sideMenu.classList.toggle("open");
+            });
+
+            const canvas = document.getElementById("canvas");
+            const ctx = canvas.getContext("2d");
+
+            const canvasConfig = {
+                scale: 1
+            };
+
+            function RectOverRect(a, b) {
+                return (
+                    a.x < b.x + b.w &&
+                    a.x + a.w > b.x &&
+                    a.y < b.y + b.h &&
+                    a.y + a.h > b.y
+                );
+            }
+
+            function RectOverCenteredRect(a, b) {
+                return (
+                    a.x - a.w / 2 < b.x + b.w / 2 &&
+                    a.x + a.w / 2 > b.x - b.w / 2 &&
+                    a.y - a.h / 2 < b.y + b.h / 2 &&
+                    a.y + a.h / 2 > b.y - b.h / 2
+                );
+            }
+
+            function CreateRectObject(x, y, w, h) {
+                return { x, y, w, h };
+            }
+
+            class Keys {
+                constructor() {
+                    this.keys = {
+                        'expand': ['BracketRight'],
+                        'shrink': ['BracketLeft'],
+                        'addVertex': ['KeyA'],
+                        'addBezierVertex': ['KeyB'],
+                        'addShape': ['KeyS'],
+                        'left1px': ['ArrowLeft'],
+                        'right1px': ['ArrowRight'],
+                        'up1px': ['ArrowUp'],
+                        'down1px': ['ArrowDown'],
+                        'shift': ['ShiftLeft', 'ShiftRight'],
+                        'delete': ['Backspace', 'Delete']
+                    };
+                    for (let i = 0; i < 9; i++) {
+                        this.keys[i + 1] = [`Digit${i + 1}`];
+                    }
+                    this.pressed = {};
+                    this.released = {};
+                    this.clicked = {};
+                    document.addEventListener('keyup', (e) => {
+                        delete this.pressed[e.code];
+                        this.released[e.code] = true;
+                        this.clicked[e.code] = true;
+                    });
+                    document.addEventListener('keydown', (e) => {
+                        this.pressed[e.code] = true;
+                    });
+                }
+                update() {
+                    for (let k in this.clicked)
+                        delete this.clicked[k];
+                    for (let k in this.released)
+                        delete this.released[k];
+                }
+                keyByValue(obj, v) {
+                    return Object.keys(obj).find(k => obj[k].includes(v));
+                }
+                getAction(action, key) {
+                    for (let k in this.keys) {
+                        for (let v = 0; v < this.keys[k].length; v++) {
+                            const value = this.keys[k][v];
+                            if (value in action) {
+                                const act = this.keyByValue(this.keys, value);
+                                if (act === key)
+                                    return true;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                press(key) {
+                    return this.getAction(this.pressed, key);
+                }
+                release(key) {
+                    return this.getAction(this.released, key);
+                }
+                click(key) {
+                    return this.getAction(this.clicked, key);
+                }
+            }
+            const keys = new Keys();
+
+            const CanvasHandler = {
+                s: 1,
+                minScale: 0.2,
+                maxScale: 4,
+                zoomStep: 0.1,
+
+                update() {
+                    if (keys.click("shrink")) {
+                        this.s = Math.max(this.minScale, this.s - this.zoomStep);
+                        keys.justReleasedBracketLeft = false;
+                    }
+
+                    if (keys.click("expand")) {
+                        this.s = Math.min(this.maxScale, this.s + this.zoomStep);
+                        keys.justReleasedBracketRight = false;
+                    }
+                }
+            };
+
+            // Sorry Lemon Games, I know you designed a mouse, but I just made this really quick for the purposes of this tool.
+            const mouse = {
+                clicked: false,
+                pressed: false,
+                released: false,
+                x: 0,
+                y: 0,
+                w: 1,
+                h: 1,
+
+                mouseUp() {
+                    this.clicked = true;
+                    this.pressed = false;
+                    this.released = true;
+                },
+
+                mouseDown() {
+                    this.pressed = true;
+                    this.released = false;
+                },
+
+                updateClick() {
+                    this.clicked = false;
+                    this.released = false;
+                },
+
+                updatePos(event) {
+                    const bounds = canvas.getBoundingClientRect();
+
+                    this.x = (event.clientX - bounds.left) / CanvasHandler.s;
+                    this.y = (event.clientY - bounds.top) / CanvasHandler.s;
+                }
+            };
+
+            function resizeCanvas() {
+                const dpr = window.devicePixelRatio || 1;
+                canvas.width = Math.round(canvas.clientWidth * dpr);
+                canvas.height = Math.round(canvas.clientHeight * dpr);
+            }
+
+            class DragPoint {
+                constructor(x, y, w, h, shape) {
+                    this.x = x;
+                    this.y = y;
+                    this.ogW = w;
+                    this.ogH = h;
+                    this.w = w;
+                    this.h = h;
+                    this.shape = shape;
+                    this.mouseOver = false;
+                    this.mouseDragging = false;
+                }
+
+                update() {
+                    this.w = this.ogW;
+                    this.h = this.ogH;
+
+                    if (this.mouseOver) {
+                        this.w = this.ogW * 1.2;
+                        this.h = this.ogH * 1.2;
+                    }
+
+                    if (this.mouseDragging) {
+                        this.x = mouse.x;
+                        this.y = mouse.y;
+                        this.w = this.ogW * 0.9;
+                        this.h = this.ogH * 0.9;
+                    }
+                }
+
+                draw() {
+                    let fillColor = "rgba(91, 143, 194, 0.39)";
+
+                    if (this.mouseOver) {
+                        fillColor = "rgba(91, 143, 194, 0.59)";
+                    }
+
+                    if (this.mouseDragging) {
+                        fillColor = "rgba(91, 143, 194, 0.78)";
+                    }
+
+                    ctx.fillStyle = fillColor;
+                    ctx.strokeStyle = "#000";
+                    ctx.lineWidth = 1;
+                    if (this.shape === "rect") {
+                        ctx.fillRect(
+                            this.x - this.w / 2,
+                            this.y - this.h / 2,
+                            this.w,
+                            this.h
+                        );
+                        ctx.strokeRect(
+                            this.x - this.w / 2,
+                            this.y - this.h / 2,
+                            this.w,
+                            this.h
+                        );
+                    }
+                    else if (this.shape === "circle") {
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y, this.w / 2, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                }
+
+                display() {
+                    this.update();
+                    this.draw();
+                }
+
+                containsPoint(x, y) {
+                    if (this.shape === "circle") {
+                        const rx = this.w / 2;
+                        const ry = this.h / 2;
+
+                        const dx = (x - this.x) / rx;
+                        const dy = (y - this.y) / ry;
+
+                        return dx * dx + dy * dy <= 1;
+                    }
+
+                    return (
+                        x >= this.x - this.w / 2 &&
+                        x <= this.x + this.w / 2 &&
+                        y >= this.y - this.h / 2 &&
+                        y <= this.y + this.h / 2
+                    );
+                }
+            }
+            
+            class Vertex {
+                constructor(x, y, dragPointShape) {
+                    this.x = x;
+                    this.y = y;
+                    this.dragPoint = new DragPoint(x, y, 20, 20, dragPointShape);
+                }
+
+                update() {
+                    this.x = this.dragPoint.x;
+                    this.y = this.dragPoint.y;
+                }
+
+                display() {
+                    this.dragPoint.display();
+                    this.update();
+                }
+            }
+            
+            class BezierVertex {
+                constructor (x, y, prevVertex) {
+                    this.x = x;
+                    this.y = y;
+
+                    this.c1 = new Vertex(this.x, this.y + 50, "circle");
+                    this.c2 = new Vertex(this.x + 50, this.y + 50, "circle");
+                    this.a = new Vertex(this.x + 50, this.y, "rect");
+
+                    this.prevVertex = prevVertex;
+                }
+
+                getVertices() {
+                    return [this.c1, this.c2, this.a];
+                }
+
+                update() {
+                    this.x = this.a.x;
+                    this.y = this.a.y;
+                }
+
+                drawControlLines() {
+                    ctx.strokeStyle = "#000000"
+
+                    ctx.beginPath();
+                    ctx.moveTo(this.c1.x, this.c1.y); 
+                    ctx.lineTo(this.prevVertex.x, this.prevVertex.y);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(this.c2.x, this.c2.y); 
+                    ctx.lineTo(this.a.x, this.a.y);
+                    ctx.stroke();
+                }
+            }
+
+            class Shape {
+                static id = 0;
+
+                constructor() {
+                    this.vertices = [];
+                    this.draggingVertex = null;
+
+                    this.col = "#969696";
+                    this.stroke = "#000000";
+
+                    this.fillOpacity = 1;
+                    this.strokeOpacity = 1;
+
+                    this.strokeWeight = 1;
+
+                    this.name = "shape" + Shape.id++;
+                    
+                    this.HTMLItem = document.createElement("div");
+                    this.HTMLItem.classList.add("side-menu-item");
+                    this.HTMLItem.innerHTML = this.name;
+
+                    this.interactable = false;
+                    
+                    // For now, reference by index for deleting out of array
+                    this.selectedVert = -1;
+                }
+
+                deleteSelectedVert() {
+                    if (this.selectedVert < 0) return;
+
+                    this.vertices.splice(this.selectedVert, 1);
+                }
+
+                select(selected) {
+                    // console.log(`Shape: ${this.name}, selected: ${selected}`)
+
+                    this.interactable = selected;
+
+                    if (selected) {
+                        this.HTMLItem.classList.add("selected");
+                    }
+                    else {
+                        this.HTMLItem.classList.remove("selected");
+                        this.selectedVert = -1;
+                    }
+                }
+
+                addVertex(x, y) {
+                    this.vertices.push(new Vertex(x, y, "rect"));
+                }
+
+                addBezierVertex(x, y) {
+                    if (this.vertices.length < 1) {
+                        window.alert("You cannot begin a shape with a BezierVertex");
+                    }
+                    else {
+                        const vertexBeforeBezier = this.vertices[this.vertices.length - 1];
+                        this.vertices.push(new BezierVertex(x, y, vertexBeforeBezier));
+                    }
+                }
+
+                update() {
+                    // If you can't interact, break out of function
+                    if (!this.interactable) return;
+
+                    // Collect every draggable point
+                    const allVertices = [];
+
+                    for (const vertex of this.vertices) {
+                        if (vertex instanceof BezierVertex) {
+                            allVertices.push(...vertex.getVertices());
+                        }
+                        else {
+                            allVertices.push(vertex);
+                        }
+                    }
+
+                    // Update hover detection
+                    for (const vertex of allVertices) {
+                        const point = vertex.dragPoint;
+
+                        point.mouseOver = point.containsPoint(mouse.x, mouse.y);
+                    }
+
+                    // Stop dragging when the mouse is released
+                    if (!mouse.pressed) {
+                        this.draggingVertex = null;
+                    }
+
+                    // Find a vertex to drag and set only once on drag
+                    if (mouse.pressed && this.draggingVertex === null) {
+
+                        // Use deconstruction to access the vertex index
+                        for (const [index, vertex] of allVertices.entries()) {
+                            if (vertex.dragPoint.mouseOver) {
+                                this.draggingVertex = vertex;
+                                this.selectedVert = index;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Update all draggable points
+                    for (const vertex of allVertices) {
+                        const point = vertex.dragPoint;
+
+                        point.mouseDragging =
+                            mouse.pressed && vertex === this.draggingVertex;
+
+                        point.update();
+                        vertex.update();
+                    }
+
+                    // Update BezierVertex positions
+                    for (const vertex of this.vertices) {
+                        if (vertex instanceof BezierVertex) {
+                            vertex.update();
+                        }
+                    }
+
+                    // Update cursor
+                    const anyHovering = allVertices.some(
+                        vertex => vertex.dragPoint.mouseOver
+                    );
+
+                    if (this.draggingVertex !== null) {
+                        canvas.style.cursor = "grabbing";
+                    }
+                    else if (anyHovering) {
+                        canvas.style.cursor = "grab";
+                    }
+                    else {
+                        canvas.style.cursor = "default";
+                    }
+                }
+
+                draw() {
+                    ctx.save();
+
+                    ctx.lineWidth = this.strokeWeight;
+
+                    // Draw the actual shape
+                    if (this.vertices.length >= 2) {
+                        ctx.beginPath();
+
+                        const firstVertex = this.vertices[0];
+                        ctx.moveTo(firstVertex.x, firstVertex.y);
+
+                        for (let i = 1; i < this.vertices.length; i++) {
+                            const vertex = this.vertices[i];
+
+                            if (vertex instanceof BezierVertex) {
+                                ctx.bezierCurveTo(
+                                    vertex.c1.x, vertex.c1.y,
+                                    vertex.c2.x, vertex.c2.y,
+                                    vertex.a.x, vertex.a.y
+                                );
+                            } else {
+                                ctx.lineTo(vertex.x, vertex.y);
+                            }
+                        }
+
+                        // Fill the shape
+                        if (this.vertices.length >= 3) {
+                            ctx.closePath();
+
+                            ctx.globalAlpha = this.fillOpacity;
+                            ctx.fillStyle = this.col;
+                            ctx.fill();
+                        }
+
+                        // Stroke the shape
+                        ctx.globalAlpha = this.strokeOpacity;
+                        ctx.strokeStyle = this.stroke;
+                        ctx.stroke();
+                    }
+
+                    ctx.restore();
+
+                    // Draw Bezier control lines
+                    for (const vertex of this.vertices) {
+                        if (vertex instanceof BezierVertex) {
+                            vertex.drawControlLines();
+                        }
+                    }
+
+                    // Draw drag points
+                    for (const vertex of this.vertices) {
+                        if (vertex instanceof BezierVertex) {
+                            for (const point of vertex.getVertices()) {
+                                point.dragPoint.draw();
+                            }
+                        }
+                        else {
+                            vertex.dragPoint.draw();
+                        }
+                    }
+                }
+
+                display() {
+                    this.update();
+                    this.draw();
+                }
+            }
+
+            // The actual tool class :)
+            class Tool {
+                get currentShape() {
+                    return this.shapes[this.shapes.length - 1];
+                }
+
+                constructor() {
+                    this.shapes = [];
+                    this.selectedShape = null;
+                    this.selectedShapeIndex = -1;
+
+                    this.shapesContainer = document.getElementById("shapes-list");
+
+                    this.fillInput = document.getElementById("fill-color-input");
+                    this.strokeInput = document.getElementById("stroke-color-input");
+
+                    this.fillOpacityInput = document.getElementById("fill-opac-input");
+                    this.strokeOpacityInput = document.getElementById("stroke-opac-input");
+
+                    this.strokeWeightInput = document.getElementById("stroke-weight-input");
+
+                    this.initHTMLInputs();
+                }
+
+                deleteSelectedShape() {
+                    if (!this.selectedShape) return;
+
+                    const shape = this.selectedShape;
+                    const index = this.shapes.indexOf(shape);
+
+                    if (index === -1) return;
+
+                    this.selectedShape = null;
+                    this.selectedShapeIndex = -1;
+
+                    this.shapes.splice(index, 1);
+                    shape.HTMLItem.remove();
+                }
+
+                initHTMLInputs() {
+                    this.fillInput.oninput = (e) => {
+                        if (this.selectedShape) {
+                            this.selectedShape.col = e.target.value;
+                        }
+                    };
+
+                    this.strokeInput.oninput = (e) => {
+                        if (this.selectedShape) {
+                            this.selectedShape.stroke = e.target.value;
+                        }
+                    };
+
+                    this.fillOpacityInput.oninput = (e) => {
+                        if (this.selectedShape) {
+                            this.selectedShape.fillOpacity = Number(e.target.value);
+                        }
+                    };
+
+                    this.strokeOpacityInput.oninput = (e) => {
+                        if (this.selectedShape) {
+                            this.selectedShape.strokeOpacity = Number(e.target.value);
+                        }
+                    };
+
+                    this.strokeWeightInput.oninput = (e) => {
+                        if (this.selectedShape) {
+                            this.selectedShape.strokeWeight = Number(e.target.value);
+                        }
+                    };
+                }
+
+                setHTMLInputs(shape) {
+                    this.fillInput.value = shape.col;
+                    this.strokeInput.value = shape.stroke;
+
+                    this.fillOpacityInput.value = shape.fillOpacity;
+                    this.strokeOpacityInput.value = shape.strokeOpacity;
+
+                    this.strokeWeightInput.value = shape.strokeWeight;
+                }
+
+                setSelectedShape(shape) {
+                    if (this.selectedShape != null) this.selectedShape.select(false);
+
+                    this.selectedShape = shape;
+
+                    this.setHTMLInputs(shape);
+                    shape.select(true);
+                }
+
+                addNewShape() {
+                    // Create new shape
+                    const newShape = new Shape();
+
+                    // Select shape when menu item is clicked
+                    newShape.HTMLItem.onclick = () => {
+                        // console.log("hi!");
+                        this.setSelectedShape(newShape);
+                    };
+
+                    // Select shape on creation
+                    this.setSelectedShape(newShape);
+
+                    // Add shape to side menu
+                    this.shapesContainer.appendChild(newShape.HTMLItem);
+
+                    // Add shape to tool
+                    this.shapes.push(newShape);
+                }
+
+                update() {
+                    if (keys.click("addShape")) {
+                        this.addNewShape();
+
+                        console.log("added shape");
+                    }
+
+                    // Leave the function is no shape is selected
+                    if (!this.selectedShape) return;
+
+                    const selectedShape = this.selectedShape;
+
+                    if (keys.click("delete")) {
+                        selectedShape.deleteSelectedVert();
+                    }
+
+                    if (keys.press("shift") && keys.click("delete")) {
+                        this.deleteSelectedShape();
+                    }
+
+                    if (keys.click("addVertex")) {
+                        selectedShape.addVertex(mouse.x, mouse.y);
+
+                        //console.log("Vertices:", this.vertices.length);
+                    }
+
+                    // Add Bezier vertex
+                    if (keys.click("addBezierVertex")) {
+                        selectedShape.addBezierVertex(mouse.x, mouse.y);
+
+                        //console.log("BezierVertex added");
+                    }
+
+
+                    for (let i = this.shapes.length - 1; i >= 0; i--) {
+                        const shape = this.shapes[i];
+
+                        shape.update();
+                        shape.draw();
+                    }
+                }
+            }
+            const tool = new Tool();
+
+            let lastPointerEvent = null;
+
+            function draw() {
+                CanvasHandler.update();
+                if (lastPointerEvent) {
+                    mouse.updatePos(lastPointerEvent);
+                }
+
+                const dpr = window.devicePixelRatio || 1;
+
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "#fff";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.setTransform(dpr * CanvasHandler.s, 0, 0, dpr * CanvasHandler.s, 0, 0);
+                tool.update();
+
+                mouse.updateClick();
+
+                keys.update();
+                requestAnimationFrame(draw);
+            }
+
+            canvas.addEventListener("pointermove", event => {
+                lastPointerEvent = event;
+                mouse.updatePos(event);
+            });
+
+            canvas.addEventListener("pointerdown", event => {
+                lastPointerEvent = event;
+                mouse.updatePos(event);
+                mouse.mouseDown();
+                canvas.setPointerCapture(event.pointerId);
+            });
+
+            canvas.addEventListener("pointerup", event => {
+                lastPointerEvent = event;
+                mouse.updatePos(event);
+                mouse.mouseUp();
+            });
+
+            canvas.addEventListener("pointercancel", () => {
+                mouse.pressed = false;
+                mouse.released = true;
+            });
+
+            window.addEventListener("blur", () => {
+                mouse.pressed = false;
+
+                for (const key in keys.pressed) {
+                    delete keys.pressed[key];
+                }
+
+                for (const key in keys.clicked) {
+                    delete keys.clicked[key];
+                }
+
+                for (const key in keys.released) {
+                    delete keys.released[key];
+                }
+            });
+
+            window.addEventListener("resize", resizeCanvas);
+
+            resizeCanvas();
+            requestAnimationFrame(draw);
+
+        }) ();
+        </script>
+    </body>
+</html>
