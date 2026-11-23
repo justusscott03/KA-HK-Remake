@@ -8,14 +8,16 @@
 //import { MainScreen } from "./MainMenu.js";
 import { background } from "https://cdn.jsdelivr.net/gh/justusscott03/PJSLibrary@1.1.3/colors.js";
 import { Game } from "./Game.js";
-Game.init({ sceneName: "test" });
-Game.Instance.initAfterCreation();
-function draw() {
-    //MainScreen();
-    //console.log(mouse.x, mouse.y);
-    background(0);
-    Game.Instance.run();
+(function () {
+    Game.init({ sceneName: "test" });
+    Game.Instance.initAfterCreation();
+    function draw() {
+        //MainScreen();
+        //console.log(mouse.x, mouse.y);
+        background(0);
+        Game.Instance.run();
+        requestAnimationFrame(draw);
+    }
     requestAnimationFrame(draw);
-}
-requestAnimationFrame(draw);
+})();
 //# sourceMappingURL=main.js.map
